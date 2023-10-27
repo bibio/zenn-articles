@@ -1,13 +1,11 @@
 ---
 title: "アノテーションデータ生成パイプラインに AWS Glue DataBrew を活用したはなし｜Offers Tech Blog"
-emoji: ""
+emoji: "🎃"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["aws", "databrew", "データ基盤"]
 published: false
 publication_name: overflow_offers
 ---
-# アノテーションデータ生成パイプラインに AWS DataBrew を活用したはなし
-
 # はじめに
 
 おはようございます。こんにちは。こんばんは。
@@ -16,9 +14,9 @@ publication_name: overflow_offers
 
 overflow にジョインしてはや 10 ヶ月がたちました。前回のブログではまだひよこだった私も、少しずつアウトプットも増えてきました。
 
-直近ではプロダクトで利用するテキストデータから特徴タグなどを抽出するアノテーションデータ生成パイプラインを構築しました。弊社のシステムは AWS を利用しており、今回は [AWS Glue DataBrew](https://aws.amazon.com/jp/glue/features/databrew/) (以降 DataBrew と呼びます) を組み込んだことで、スケーリングを担保しつつ短期間でのパイプライン実装できたのでその取り組みをご紹介します。
+直近ではプロダクトで利用するテキストデータから特徴タグなどを抽出するアノテーションデータ生成パイプラインを構築しました。弊社のシステムは AWS を利用しており、今回は [AWS Glue DataBrew](https://aws.amazon.com/jp/glue/features/databrew/) (以降 DataBrew と呼びます) を組み込んだことで、スケーリングを担保しつつ短期間でのパイプライン実装できたのでその取り組みをご紹介します。DataBrew そのものよりかは、AWS のサービス間連携や Contiuous Delivery の苦労が多かったのでその辺りを重点的に説明しています。
 
-## アノテーションデータ生成のプロセス
+# アノテーションデータ生成のプロセス
 
 はじめに、今回構築したアノテーションデータ生成パイプラインについてご説明します。
 
@@ -26,37 +24,25 @@ overflow にジョインしてはや 10 ヶ月がたちました。前回のブ�
 
 アノテーションデータ生成パイプラインのプロセスは次の通りになります。
 
-![Untitled](%E3%82%A2%E3%83%8E%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%83%86%E3%82%99%E3%83%BC%E3%82%BF%E7%94%9F%E6%88%90%E3%83%8F%E3%82%9A%E3%82%A4%E3%83%95%E3%82%9A%E3%83%A9%E3%82%A4%E3%83%B3%E3%81%AB%20AWS%20DataBrew%20%E3%82%92%E6%B4%BB%E7%94%A8%E3%81%97%E3%81%9F%E3%81%AF%E3%81%AA%E3%81%97%20c7ce7c5d63474d95a27281ec1aba4f5a/Untitled.png)
+![パイプラインプロセス](/images/use-aws-databrew-for-annotation-infra/image1.png)
 
 1. テキストデータの取得と保存
-プロダクト DB・ログ・API・スクレイピングなど様々な手段でデータを取得します。この段階では加工せずほぼ生データのまま保存しています。
+   プロダクト DB・ログ・API・スクレイピングなど様々な手段でデータを取得します。この段階では加工せずほぼ生データのまま保存しています。
 2. データプレパレーション
-1. で取得したデータの前処理を行う工程です。ステージングなどともいわれ、データのクレンジング、PII のマスキング、生計などを行います。
+   1. で取得したデータの前処理を行う工程です。ステージングなどともいわれ、データのクレンジング、PII のマスキング、生計などを行います。
 3. 抽出ロジック処理
-2. でクレンジングしたテキストデータを単語などに分解し、テキストの特徴として抽出します。テキストの単語の分解には形態素解析、特徴の抽出にはルールベースまたは機械学習・AI を用いることが一般的です。今回は、初期フェーズのためすでに社内に存在していたラベル辞書に基づき、ルールベースで実装しています。
+   2. でクレンジングしたテキストデータを単語などに分解し、テキストの特徴として抽出します。テキストの単語の分解には形態素解析、特徴の抽出にはルールベースまたは機械学習・AI を用いることが一般的です。今回は、初期フェーズのためすでに社内に存在していたラベル辞書に基づき、ルールベースで実装しています。
 4. DWH に出力
-3. で抽出されたアノテーションデータを、メタデータととも DWH に保存します。
+   3. で抽出されたアノテーションデータを、メタデータととも DWH に保存します。
 
 現時点では数種類ですが、今後様々なデータセットの入力を想定しているため、データプレパレーションでフォーマットなどを吸収し、抽出ロジックを汎用的に実装する方針としました。
 
 AWS 上でのアーキテクチャ図はこちらです。
 
-![Untitled](%E3%82%A2%E3%83%8E%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%83%86%E3%82%99%E3%83%BC%E3%82%BF%E7%94%9F%E6%88%90%E3%83%8F%E3%82%9A%E3%82%A4%E3%83%95%E3%82%9A%E3%83%A9%E3%82%A4%E3%83%B3%E3%81%AB%20AWS%20DataBrew%20%E3%82%92%E6%B4%BB%E7%94%A8%E3%81%97%E3%81%9F%E3%81%AF%E3%81%AA%E3%81%97%20c7ce7c5d63474d95a27281ec1aba4f5a/Untitled%201.png)
+![AWS アーキテクチャ](/images/use-aws-databrew-for-annotation-infra/image2.png)
 
-リトライの制御で DataBrew と抽出ロジックの間に Lambda + SQS を挟んでますが、基本はこのフローです。
+制御の都合で DataBrew と抽出ロジックの間に Lambda + SQS を挟んでますが、基本はこのフローです。
 （他にもエラー通知や CloudWatchLogs などはありますが割愛しています）
-
-### DataBrew採用の背景
-
-当初は、データプレパレーションの処理を分割せずに、テキストデータ保存時に加工することを検討しました。
-
-しかし、要件が流動的であったことで都度再取得が発生することを防止すること、および、データレイクとしてデータをそのまま残すというデータ基盤のベストプラクティスに従うため、処理を分割することにしました。
-
-データプレパレーションの実装は、シンプルな機能が多いためスクリプトで実装することも容易ですが、データのスケーリングを考慮したり、様々なフォーマットの入力を考慮して実装するには慎重な設計と実装が必要になりテストや時間もかかります。そのため、今回は面倒な部分をまとめてやってくれるマネージドサービスの利用を検討しました。
-
-弊社では AWS インフラを利用していること、極力 AWS 内にとどめたかったことから、DataBrew と同じく AWS の ETL サービスである AWS Glue の比較検討を行いました。
-
-AWS Glue にも Visual Studio という GUI があり Python スクリプトを記述することで柔軟性のある運用が可能でしたが、スクリプトが必要になったときの学習コストが高く弊社リソースではネックになるとの意見がありました。一方、DataBrew はクローラのスキーマ自動検出の精度が高く、PII をはじめとする変換処理の豊富さがあり、今回は短期間での実装を目標としていたため DataBrew を採用しています。
 
 # AWS Glue DataBrewとは？
 
@@ -64,7 +50,9 @@ AWS Glue DataBrew はノーコードのデータクレンジングツールで�
 
 類似サービスとしては、GCP の [Dataprep by Trifacta](https://cloud.google.com/dataprep?hl=ja) があります。
 
-![Untitled](%E3%82%A2%E3%83%8E%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%83%86%E3%82%99%E3%83%BC%E3%82%BF%E7%94%9F%E6%88%90%E3%83%8F%E3%82%9A%E3%82%A4%E3%83%95%E3%82%9A%E3%83%A9%E3%82%A4%E3%83%B3%E3%81%AB%20AWS%20DataBrew%20%E3%82%92%E6%B4%BB%E7%94%A8%E3%81%97%E3%81%9F%E3%81%AF%E3%81%AA%E3%81%97%20c7ce7c5d63474d95a27281ec1aba4f5a/Untitled%202.png)
+## DataBrew のフロー
+
+![DataBrew Flow](/images/use-aws-databrew-for-annotation-infra/image3.png)
 
 はじめに Dataset を定義します。
 
@@ -80,13 +68,30 @@ S3 など(Redshift などからの入力も可能)から CSV などのデータ(
 
 （後述する CD を構築する上で、このレシピの分離は大変助かりました。本番でコンソールを操作してレシピの作成やジョブ実行のテストなど極力やりたくないですよね）
 
-以下は JSON の例で、以下の操作をしています
+## DataBrew インタラクティブセッションでレシピを作成する
+
+S3 などから入力したデータセットを DataBrew インタラクティブセッションで開き、レシピと呼ばれる変換ステップを作成します。
+
+セッションを開始すると読み込んだデータセットからスキーマ（カラム名や型）が検出され、スプレッドシートのような UI のサンプルデータビュー（グリッド）やスキーマのテーブル、そしてレシピ操作画面が表示されます。
+
+次はスキーマ検出の例です。カラム名とデータ型が推測されたほか、データの品質や値の分散などの簡単なプロファイルが表示されます。
+
+![スキーマの例](/images/use-aws-databrew-for-annotation-infra/image2.png)
+
+データサンプリングのサイズや方法を決めることで、スキーマ検出の精度を改善できます。データに大きな偏りがない限りはデフォルトの値でも十分な精度でした。
+
+レシピは UI の操作で作成できます。ツールバーのメニューが多く、どの機能がどういう動きになるのかがわかりにくいので、最初は慣れが必要かもしれませんが・・・。
+
+
+## レシピの例
+
+JSON 形式で、次の要件を満たすレシピのサンプルです。
 
 - 重複行を排除
 - user カラムのネストしたオブジェクトから id を抽出し user_id としてカラム追加
-- title カラムの[TEST]で始まる行を削除
+- title カラムの `[TEST]` で始まる行を削除
 
-```jsx
+```
 [
   {
     "Action": {
@@ -122,11 +127,13 @@ S3 など(Redshift などからの入力も可能)から CSV などのデータ(
 ]
 ```
 
-この JSON ファイルを AWS コンソールまたは AWS Cli などからレシピを発行できます。
+## レシピの発行
+
+レシピは AWS コンソールまたは AWS Cli などからレシピを発行できます。
 
 AWS CLI では以下で発行できます。
 
-```json
+```
 # 初回
 aws databrew create-recipe --name my-recipe --steps file://recipe.json
 # 2回目以降
@@ -136,7 +143,7 @@ aws databrew update-recipe --name my-recipe --steps file://recipe.json
 aws databrew publish-recipe --name my-recipe
 ```
 
-### DataBrewで利用可能な変換メソッド
+## DataBrewで利用可能な変換メソッド
 
 変換メソッドの種類は 250 以上あり、SQL や簡単な変換処理はおおむね実装されています。特に、機械学習の前処理で使うワンホットエンコーディングなどの計算処理や、個人識別情報(PII)まわりのステップが充実しています。
 
@@ -224,6 +231,16 @@ aws databrew publish-recipe --name my-recipe
     - IP アドレス↔数値変換
     - URL QueryString の抽出
 
+## Recipe Jobの実行
+
+レシピを作成した後にデータを変換するには Recipe Job を作成して実行します。
+
+入力となるデータセット、変換に利用するレシピ、出力先（S3 の他、Redshift や RDB、Snowflake も指定可能）やジョブの実行環境を指定し実行します。
+
+出力先も、上部毎に出力を分けたり、置き換えたりと柔軟な設定が可能になっています。
+
+スケジューラによる定期実行も可能です。
+
 # DataBrewを運用する際の注意点
 
 実際にプロダクションで運用する際は、[GitHub Actions](https://github.co.jp/features/actions) や IaC ツールを利用し自動化していると思います。弊社では、GitHub Actions と Terraform を組み合わせて Continuous Delivery(CD)パイプラインを構築しています。
@@ -261,7 +278,7 @@ DataBrew に限らず EventBridge 全般でいえることですが、フィル�
 
 わかりやすい通知が届くので便利です。
 
-![Untitled](%E3%82%A2%E3%83%8E%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%83%86%E3%82%99%E3%83%BC%E3%82%BF%E7%94%9F%E6%88%90%E3%83%8F%E3%82%9A%E3%82%A4%E3%83%95%E3%82%9A%E3%83%A9%E3%82%A4%E3%83%B3%E3%81%AB%20AWS%20DataBrew%20%E3%82%92%E6%B4%BB%E7%94%A8%E3%81%97%E3%81%9F%E3%81%AF%E3%81%AA%E3%81%97%20c7ce7c5d63474d95a27281ec1aba4f5a/Untitled%203.png)
+![Slack Notification](/images/use-aws-databrew-for-annotation-infra/image4.png)
 
 ### DataBrew JobのOutputがどのジョブが出力したのか知りたい
 
@@ -269,7 +286,7 @@ S3 の場合、オブジェクトのメタデータとしてジョブ名(キー:
 
 調査や別の入力などでフィルタする場合に役立ちますが、EventBridge から通知される jobRunId と一部異なる(EventBridge では `db_` だったのが `jr_` になっている) ので要注意です。
 
-![Untitled](%E3%82%A2%E3%83%8E%E3%83%86%E3%83%BC%E3%82%B7%E3%83%A7%E3%83%B3%E3%83%86%E3%82%99%E3%83%BC%E3%82%BF%E7%94%9F%E6%88%90%E3%83%8F%E3%82%9A%E3%82%A4%E3%83%95%E3%82%9A%E3%83%A9%E3%82%A4%E3%83%B3%E3%81%AB%20AWS%20DataBrew%20%E3%82%92%E6%B4%BB%E7%94%A8%E3%81%97%E3%81%9F%E3%81%AF%E3%81%AA%E3%81%97%20c7ce7c5d63474d95a27281ec1aba4f5a/Untitled%204.png)
+![Image Metadata](/images/use-aws-databrew-for-annotation-infra/image5.png)
 
 ### TerraformでDataBrewを使う
 
@@ -278,6 +295,8 @@ AWS の IaC ツールとして Terraform を採用している組織も多いと
 Terraform で AWS リソースを扱うには [AWS Provider](https://registry.terraform.io/providers/hashicorp/aws/latest) を使うことが一般的ですが、残念ながら 2023-10-26 時点で AWS Provider には DataBrew Resource は実装されていません。
 
 代替として、 [AWS Cloud Control (awscc) Provider](https://github.com/hashicorp/terraform-provider-awscc) を使うことができます。AWS Cloud Control Provider  は AWS Cloud Control API の CloudFormation リソース定義から生成されるもので、サービス提供から比較的はやくに実装されます。HashiCorp 社により維持されています。
+
+次は Terraform コードのサンプルです。
 
 ```json
 
@@ -294,13 +313,44 @@ provider "awscc" {
   region = "ap-northeast-1"
 }
 
-resource "awscc_databrew_dataset" {
+resource "awscc_databrew_dataset" "my_dataset" {
+  name = "my-dataset"
+  input = {
+    s3_input_definition = {
+        bucket = "my-bucket"
+        key = "target-data"
+    }
+  }
+  format_options = {
+    json = {
+        multi_line = false
+    }
+  }
 }
 
-resource "awscc_databrew_project" {
+resource "awscc_databrew_project" "my_project" {
+   name = "my-project"
+   dataset_name = awscc_databrew_dataset.my_dataset.name
+   recipe_name = "my-recipe"
+   role_arn = "role arn..."
 }
 
 resource "awscc_databrew_job" {
+   name = "my-job"
+   role_arn = "role arn..."
+   type = "RECIPE"
+   dataset_name = awscc_databrew_dataset.my_dataset.name
+   recipe = {
+      name = "my-recipe"
+      version = "1.0"
+   }
+   outputs = [{
+     location = {
+       buckert = "output-bucket"
+       key = "output-key"
+     }
+     format = "JSON"
+   }]
 }
 ```
 
@@ -347,11 +397,11 @@ data "external" "recipe_version" {
 }
 ```
 
-## 課題点
+# 課題点
 
 上記で説明したとおり、DataBrew はデータプレパレーション処理を簡略化できましたが、いくつかの課題点もあります。
 
-### データ量によりコストが増える
+## データ量によりコストが増える
 
 DataBrew は RecipeJob の実行料金が、Glue に比べても 10〜40%ほど高く、Fagate に比べると同スペックのノードに対して 2 倍程度の価格差があります。
 
@@ -361,7 +411,7 @@ DataBrew は RecipeJob の実行料金が、Glue に比べても 10〜40%ほど�
 
 弊社では 2 ヶ月ほど、検証環境と本番環境で運用しておりますが、月額 30 ドル前後と想定内におさまっています。
 
-### 増分処理ができない
+## 増分処理ができない
 
 DataBrew Job は、更新されたデータのみを対象にするなどの機能がなく、すべて洗い替えとなります。
 
@@ -369,7 +419,7 @@ DataBrew Job は、更新されたデータのみを対象にするなどの機�
 
 ただし、今年 7 月に、[AWS Glue Job上でDataBrewレシピを含める機能](https://aws.amazon.com/jp/about-aws/whats-new/2023/07/aws-glue-jobs-databrew-recipes/) がリリースされましたので、Glue Job を使うことで柔軟な運用が可能になると思います。
 
-### dbtの方が低コストで便利なのでは？
+## dbtの方が低コストで便利なのでは？
 
 トランスフォームレイヤーについて [dbt](https://www.getdbt.com/) (Data build tool) という選択肢があったのでは？と思われるかたもいらっしゃるおもいます。
 
@@ -379,7 +429,7 @@ DataBrew Job は、更新されたデータのみを対象にするなどの機�
 
 ただし、dbt はただの CLI のため、dbt cloud を使うか、実装は ECS Fargate や EKS などコンテナを使う必要があります。dbt cloud は別途料金がかかります。
 
-## まとめ
+# まとめ
 
 本記事では、弊社システムにおける AWS の DataBrew の利用事例の紹介と、運用上時の注意点や課題点についてご説明しました。
 
@@ -389,3 +439,7 @@ AWS のノーコードのデータプレパレーションツールですが、�
 
 DataBrew は、テックブログなどで登場することも少なくマイナーな存在ですが、手軽にデータ分析を求められたときの参考になれば幸いです。
 
+# 関連記事
+
+- [Offers 技術組織の課題 a.k.a 誰か手伝ってリスト - Data/ML と社内 IT 戦略編 | Offers Tech Blog](https://zenn.dev/overflow_offers/articles/20220719-develop-issues-part4)
+- [専任がいないチームでの機械学習プロジェクト取り掛かり方 - AutoMLでデータサイエンス無双｜Offers Tech Blog](https://zenn.dev/overflow_offers/articles/20220516-data-science-musou-with-automl)
