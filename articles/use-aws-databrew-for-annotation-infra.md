@@ -253,7 +253,7 @@ AWS でのサービス間連携では AWS EventBridge を使うことが多い�
 
 以下のようなイベントが発行されます。
 
-```jsx
+```
 {
    "source": "aws.databrew",
 	 "detail-type": "DataBrew Job State Change",
@@ -298,7 +298,7 @@ Terraform で AWS リソースを扱うには [AWS Provider](https://registry.te
 
 次は Terraform コードのサンプルです。
 
-```json
+```
 
 terraform {
   required_providers {
@@ -360,7 +360,7 @@ AWS Cloud Control Provider は、API 呼び出し時のパラメータバリデ�
 
 terraform data と、local-exec provisioner をくみあわせて実装しました。
 
-```json
+```
 resource "terraform_data" "my_recipe" {
   input    = file("recipe_dir/my-recipe.json")
 }
