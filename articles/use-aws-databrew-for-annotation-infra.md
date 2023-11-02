@@ -3,7 +3,8 @@ title: "アノテーションデータ生成パイプラインに AWS Glue DataB
 emoji: "🍺"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["aws", "databrew", "データ基盤"]
-published: false
+published: true
+published_at: 2023-11-14 10:00
 publication_name: overflow_offers
 ---
 # はじめに
