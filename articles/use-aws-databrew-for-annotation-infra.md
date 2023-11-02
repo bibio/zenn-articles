@@ -1,6 +1,6 @@
 ---
 title: "アノテーションデータ生成パイプラインに AWS Glue DataBrew を活用したはなし｜Offers Tech Blog"
-emoji: "🎃"
+emoji: "🍺"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["aws", "databrew", "データ基盤"]
 published: false
@@ -253,7 +253,7 @@ AWS でのサービス間連携では AWS EventBridge を使うことが多い�
 
 以下のようなイベントが発行されます。
 
-```jsx
+```
 {
    "source": "aws.databrew",
 	 "detail-type": "DataBrew Job State Change",
@@ -298,7 +298,7 @@ Terraform で AWS リソースを扱うには [AWS Provider](https://registry.te
 
 次は Terraform コードのサンプルです。
 
-```json
+```
 
 terraform {
   required_providers {
@@ -360,7 +360,7 @@ AWS Cloud Control Provider は、API 呼び出し時のパラメータバリデ�
 
 terraform data と、local-exec provisioner をくみあわせて実装しました。
 
-```json
+```
 resource "terraform_data" "my_recipe" {
   input    = file("recipe_dir/my-recipe.json")
 }
@@ -391,7 +391,7 @@ result=$(aws databrew describe-recipe --name my-recipe --no-cli-pager 2> /dev/nu
 echo $result | jq -r '{ RecipeVersion: .RecipeVersion }'
 ```
 
-```json
+```
 data "external" "recipe_version" {
   program     = ["sh", "get_recipe_version.sh"]
 }
@@ -408,8 +408,6 @@ DataBrew は RecipeJob の実行料金が、Glue に比べても 10〜40%ほど�
 また、DataBrew インタラクティブセッションも 1 セッション 30 分単位で、セッションあたり 1USD かかります(ただし初回利用は 40 回のセッション無料サービスあり)
 
 そのため、画面上でレシピを頻繁に編集したり、ジョブを実行する場合のコストに注意する必要があります。
-
-弊社では 2 ヶ月ほど、検証環境と本番環境で運用しておりますが、月額 30 ドル前後と想定内におさまっています。
 
 ## 増分処理ができない
 
@@ -437,7 +435,7 @@ AWS のノーコードのデータプレパレーションツールですが、�
 
 一方、データ量の増加に向けてのコストの問題がありますが、Glue Job との連携などで回避策もありそうです。
 
-DataBrew は、テックブログなどで登場することも少なくマイナーな存在ですが、手軽にデータ分析を求められたときの参考になれば幸いです。
+DataBrew は、技術ブログなどで登場することも少なくマイナーな存在ですが、手軽にデータ分析を求められたときの参考になれば幸いです。
 
 # 関連記事
 
