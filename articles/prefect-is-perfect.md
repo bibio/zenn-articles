@@ -1,5 +1,5 @@
 ---
-title: "Prefect Cloudでワークフロー構築時のDX向上させようとしているはなし"
+title: "Prefectでプロダクトデータ処理基盤のDXを向上させようとしているはなし"
 emoji: "♻"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["Prefect", "Workflows", "dataengineering", "Python"]
@@ -9,43 +9,46 @@ publication_name: overflow_offers
 
 # はじめに
 
-おはこんにちは。
-
+おはこんばんちは。
 [Offers](https://offers.jp/) と、[Offers MGR](https://offers-mgr.com/lp/) を運営している株式会社 [overflow](https://overflow.co.jp/) のバックエンドエンジニアばばです。
 
-Web サービスを開発している皆様であれば、データを扱うことの大変さやつらさを味わったことはあるかと思います。
+Web サービスを開発している皆様であれば、高度なデータ処理の大変さやつらさを味わったことはあるかと思います。
 
 - この表示用データを作成するには、API からのデータ取得が終わった後に、DWH で集計して・・・
 - 想定してたよりデータ量が多くて、許容時間内に処理が終わらない
 - あの API の Rate Limit 厳しいからから並列数制御しないと
 
-など、悩みはつきません（少なくとも、私は）。
+など、悩みはつきません^[少なくとも、私は]。
 
 上記の悩みが、開発効率性を落とし、技術的負債となってきていることから、Workflow Engine (タスクの実行順序など業務プロセスを自動で管理するソフトウエア) を導入しようという話がチーム内でおこりました。
 
 今回は、Workflow Engine をどのように選定したか、そして、現在導入を進めている [Prefect](https://www.prefect.io/) ついてご紹介いたします。
 
+:::message
+最初に現在のつらみをだらだら述べておりますので、 [Workflow Engine の選定過程を興味ある場合はこちら](#workflow-engine-の検討)、[Prefect に興味のある場合はこちら](#prefect-について) へどうぞ。
+:::
+
 # 現在のデータ処理基盤のつらみ
 
 弊社のバックエンド技術スタックは Ruby on Rails で統一されており、この非機能要件の制御に Sidekiq の機能を活用して運用しています。
-データの取得・集計などの基盤も、Sidekiq Worker 上でマイクロバッチ処理を実装し、[Sidekiq Pro Batches and Callbacks](https://www.youtube.com/watch?v=b2fI0vGf3Bo&list=PLjeHh2LSCFrWGT5uVjUuFKAcrcj5kSai1) (以下、 Sidekiq Batches) を利用しています。
-Sidekiq Worker 自体は、API の非同期処理ユースケースからわかるように、分散処理には強く、きめこまやかで柔軟な処理が実装できます。
 
-また、 Rate Limit や DB 負荷の問題に対応する流量制限には、Sidekiq Enterprise の [Rate Limiting](https://github.com/sidekiq/sidekiq/wiki/Ent-Rate-Limiting) を活用し制限しています。
+データの取得・集計などの基盤も、Sidekiq Worker 上でマイクロバッチ処理を実装し、[Sidekiq Pro Batches and Callbacks](https://www.youtube.com/watch?v=b2fI0vGf3Bo&list=PLjeHh2LSCFrWGT5uVjUuFKAcrcj5kSai1) (以下、 Sidekiq Batches) を利用しています。
+
+Sidekiq Worker 自体は、API の非同期処理ユースケースからわかるように、分散処理には強く、きめこまやかで柔軟な処理が実装できます。 また、 Rate Limit や DB 負荷の問題に対応する流量制限には、Sidekiq Enterprise の [Rate Limiting](https://github.com/sidekiq/sidekiq/wiki/Ent-Rate-Limiting) を活用し制限しています。
 
 Ruby on Rails の資源を利用しつつ、　カジュアルに Workflow を組めるのは大変便利なので重宝していますが、プロダクトに求められる要件の複雑化により、Workflow も複雑化していきました。
+
 その実装を進める上で、様々な痛みが起こるようになりました。
 
-## Sideiq Batches での Workflow を組むと可読性が低く、Testing も難しい
+## Sideiq Batches での Workflow を組むと可読性が低くなる
 
-Sidekiq Batches は、Batch と呼ばれるグループ化した Worker 群の完了を Sidekiq Server 側で管理し、完了したら Callbacks を起動する仕組みになっています。
-なので、依存関係を表現は、「Callbacks 中で次の Batch を作成して実行する」となります。
-これが、Flow の直感的な部分を阻害しています。
+Sidekiq Batches は、Batch と呼ばれるグループ化した Worker 群の実行状態を Sidekiq 側で管理し、状態変更（完了、成功、失敗など）で Callbacks を呼び出す仕組みになっています。
+この仕組みを利用して、依存関係をを記述するには、「状態変更の Callbacks 中で次の Batch を作成し、親の Batch の子ジョブとして追加する」ことを繰り返す実装になります。
 
-Workflow は宣言的、手続的にかけたわかりやすくなります。理想は、こんな感じです。
-GitHub Actions はその最たるもので YAML を使うことでわかりやすい構成になっています。
+一方、Workflow は、処理の順番を定義するものであるので、次に何が実行されるかが自明でないと処理を追うことが難しくなります。
+GitHub Actions も、Workflow Engine の 1 つであり、YAML で宣言的なわかりやすい構文となっています。
 
-```
+```yaml
 flow1-jobs:
   name: flow1
   steps:
@@ -68,14 +71,10 @@ flow4:
     - run: task4-2
 ```
 
-ですが、これを Sidekiq Batches で実装すると、Sidekqi Batches の知識がないと可読性の低いコードになります。
-(この疑似コードの実装でも batch_id の扱いにかなり混乱します)
+ですが、これを Sidekiq Batches で実装すると、Sidekiq Batches の知識がないと到底理解のできないコードになります。
+以下に疑似コードを示します。このフローを実装するにも何度か頭が混乱しました。ふぅ。
 
-データの受け渡しは、Redis や DB を使わない限り、引数の `arguments` で受け渡す必要があります。
-単体テストするにも Redis が必要になり、Sidekiq 上で動作させると意図しない動きをすることもあります。ふぅ。
-
-
-```
+```ruby
 # Workflow のエントリポイント
 def start_workflow(arguments)
   overall = Sidekiq::Batch.new
@@ -228,22 +227,21 @@ end
 
 ## もっと楽にわかりやすい Workflow を記述したい
 
-このように Sidekiq Batch では、Workflow の管理のためのコスト、および、非同期処理のデバッグのしにくいデメリットがありました。
-そして、そのデメリットは、プロダクトの開発工数にも影響を与えるようになってきました。
+このように Sidekiq Batch では、Workflow 自身を実装する必要があり、デバッグにも時間がかかり、少し大きめの機能開発の時間を圧迫しはじめました。
 
-本来であれば、 Workflow の管理ではなく、データ集計ロジックなどプロダクトの価値をあたえるものに時間を注ぐべきです。
+本来であれば、 Workflow の管理は不要で、データ集計ロジックなどプロダクトの価値をあたえるものに時間を注ぐべきです。
 
 そのため、複数の Workflow Engine の導入を検討し、比較することになりました。
 
 # Workflow Engine の検討
 
-Workflow Engine には様々なプロダクトがあります。
+Workflow Engine には様々なプロダクトがあります。闇雲に
 
 ## 選定基準
 
 基本的な Workflow Engine の機能要件・性能要件を満たしていることは最低限の条件でした。
 
-- DAG のような、依存関係をもった実行順が管理できること
+- DAG^[[有向非巡回グラフ](https://ja.wikipedia.org/wiki/%E6%9C%89%E5%90%91%E9%9D%9E%E5%B7%A1%E5%9B%9E%E3%82%B0%E3%83%A9%E3%83%95) という、依存関係を表現するのに適したデータ構造。Workflow Engineの内部では] のような、依存関係をもった実行順が管理できること
 - スケジュール機能があること
 - フロー単位での停止やリトライができること
 
@@ -251,7 +249,7 @@ Workflow Engine には様々なプロダクトがあります。
 
 - 弊社特有の事象として、Sidekiq や AWS と親和性高く連携できるか
 - AWS との連携や拡張性が楽で、極力マネージドな構成と Open Source が選べるもの
-- Developer EXperience をあげてくれるもの
+- Developer EXperience^[おもに生産性を上げストレスを減らすことを指しますが、イケてるものを使いたいという主観的な意味もこめてます] をあげてくれるもの
 
 ### DAG とは？
 
@@ -301,7 +299,7 @@ Kuebenetes に特化した Argoflow や、クラウドベンダが提供する�
 
 ## 他の Workflow Engine に興味のある方へ
 
-網羅性があります。 GitHub Stars の数も参考になりますよ。
+かなり網羅されています。 GitHub Stars の数も参考になりますよ。
 
 https://github.com/meirwah/awesome-workflow-engines
 
@@ -337,25 +335,62 @@ Prefect 側も Airflow との対比記事を出しているので、参考まで
 
 https://www.prefect.io/prefect-vs-airflow
 
+## Prefect と Prefect Cloud
+
+Prefect は、オープンソース Python ベースの Workflow Engine です。
+Prefect Cloud は、オープンソースの Prefect Server の全機能に加え、Push Work Pool や Webhook などの付加価値を加えたものです。
+
+### Prefect Cloud の料金
+
+https://www.prefect.io/pricing
+
+小規模で Prefect Server の全機能を使える無料プランがあり、小さめの規模であれば十分に使えます。
+
+Pro 版は 450 ドル/月、 Enterprice 版もあります。
+
 ## Prefect のアーキテクチャーについて
 
-Prefect のアーキテクチャはシンプルですが、柔軟性が高く、様々なデプロイ方法があるため、複雑に見えます。
+Prefect のアーキテクチャは、柔軟性が高く複数のモデルが存在するため最初は混乱してしまいますが、「Flow はどこにあるのか」「どこで、だれが Flow を実行するのか」を意識すれば難しくはありません。
 
-ですが、肝は次の通りです:
+### Flow は Python Code
 
-- Flow は Python Code であり、 Python と Prefect Python SDK がインストールされていれば、原則的にはどの環境でも実行可能である
-- Deployment には Worker モデルと Serve モデル、Push Work モデル(Prefect Cloud のみ対応) の 3 タイプがある
-  - Worker モデルは、Flow の実行環境と分離しているモデル
-  - Serve モデルは、Flow を常駐させ、実行させるモデル
-  - Push Work モデルは、Prefect Cloud から実行環境上でフローを実行するモデル
-- Flow の Code はストレージ上に保存される
-  - Local, AWS S3, GCS, Azure のほか、 docker images に組み込んだり、 Git Repository から Pull することが可能
-- リソースへのアクセス情報は Blocks として定義する
-  - 例えば、 AWS クレデンシャルなど
-  - コネクションを wrap することも可能
-- 拡張機能は Integrations と呼ばれ、Python で記述可能
+Python のライブラリで、 Python と Prefect SDK がインストールされていれば、原則的にはどの環境でも実行可能です。
+これが、ローカルでの開発やテストを記述する上で DX を向上させる理由となっています。
 
-![アーキテクチャ](/images/prefect-is-perfect/img2.png)
+Deployment した場合は、 Flow Code Storage 上にコードを配置する必要があります。
+
+Flow Code Storage は、Docker イメージに含める方法、クラウドプロバイダのストレージサービスを利用する方法のほか、 GitHub などの Git ベースストレージも利用できます。
+
+### Deployment は Flow を実行するための情報の定義
+
+Deployment は、 Prefect Cloud (または Prefect Server、以降 Prefect Cloud/Server と記述します) 上に、Flow コードの場所や、Flow の実行環境、実行スケジューリングなどをまとめたものです。
+Prefect Cloud/Server は、Deployment をもとに、Flow を実行します。
+
+Deployment には 2 つのモデルが存在し、ユースケースに応じて使い分けます。
+
+#### Serve モデル
+
+Flow 毎にサービスを起動して、 Prefect Cloud/Server と通信し、Flow を実行するモデルです。
+サブプロセス内で実行されるため、設定も少なく直感的でわかりやすいモデルですが、反面、Flow の数だけプロセスが必要でかつ、実行しないときも起動しておく必要があるため、Flow の数がスケールすると非常に高価なものになります。実行環境が、従量課金のサーバレスサービスを使う場合はあまり使われないと思われます。
+
+![Serve モデル](/images/prefect-is-perfect/img4.png)
+
+#### Work Pool モデル
+
+Work Pool と呼ばれる、 Flow を実行するインフラストラクチャの定義を定義します。 Worker は、Flow 実行環境で動作して Prefect Cloud/Server と通信し、Flow を実際に実行します。(Worker 上では実行されず、実行環境を作成して実行を送信するまでを担います)。
+
+Flow 毎 / Deployment 毎に Work Pool を指定できるため、柔軟なプロビジョニングを行うことができます。
+
+また、Prefect Cloud を利用すると Worker なしで直接ジョブを実行できる、 Push Work Pool と Managed Worker Pool ^[2023 年 12 月頃ベータ版がリリースされました。管理画面に突然メニューが追加されていて驚いた] が利用できます。
+
+![Worker モデル](/images/prefect-is-perfect/img5.png)
+
+
+実行環境がクラウドプロバイダのサーバレスサービスを利用しているときは、以下に詳細の説明があります。
+
+https://docs.prefect.io/latest/guides/deployment/serverless-workers/
+
+基本的には Worker の常駐が必要で、Worker により柔軟な同時実行制限などが可能になります。
 
 
 ## Prefect のメリット
@@ -363,6 +398,8 @@ Prefect のアーキテクチャはシンプルですが、柔軟性が高く、
 ### Python の環境に閉じている
 
 Python に特化しているため、 エコシステムが利用でき、Python さえ理解していれば学習コストは低くなります。
+
+また、Conda、NumPy、Pandas など
 
 Python 自身の学習コストが発生しますが、データサイエンスや機械学習でのメジャーな言語となることや、Ruby や Perl などの近いシンタックスをもつことから、
 Web サービス開発のバックエンドエンジニアにはなじみやすいといえるでしょう。 (好みは別にして・・・)
@@ -373,49 +410,57 @@ Airflow とは異なり、DAG を意識せずに実装可能な構造となっ�
 
 先ほどの GitHub Actions で記述したフローを Prefect のコードに落としたものです。
 
-```
+```python
 from prefect import flow, task
+from prefect.task_runners import ConcurrentTaskRunner
+
 
 @task
-def job1_task():
-   print('do flow1-task1')
-   print('do flow1-task2')
-   return 'return job1'
+def job1_flow():
+    print('do flow1-task1')
+    print('do flow1-task2')
+    return 'return job1'
+
 
 @task
-def job2_task():
-   print('do job2-task')
+def job2_flow():
+    print('do job2-task')
+
 
 @task
-def job3_task():
-   print('do job3-task')
+def job3_flow():
+    print('do job3-task')
+
 
 @task
-def job4_task():
-   print('do job4-task1')
-   print('do job4-task2')
+def job4_flow():
+    print('do job4-task1')
+    print('do job4-task2')
+
 
 @flow
-def overall_flow(arg: str):
-    job1_future = job1_task.submit()
+def overall_flow():
+    job1_future = job1_flow.submit()
     print('job1 submitted')
-    job2_future = job2_task.submit()
+    job2_future = job2_flow.submit()
     print('job2 submitted')
     result = job1_future.result()
     print(f'job1 finished. job1 result={result}')
     job2_future.wait()
     print(f'job2 finished.')
 
-    job3_task()
-    job4_task()
+    job3_flow()
+    job4_flow()
+
 
 if __name__ == '__main__':
     overall_flow()
+
 ```
 
 このスクリプトですが、 pip で prefect をインストールすれば、特に設定せずに実行できます！
 
-```
+```bash
 python3 -mvenv .venv
 source ~/.venv/bin/activate
 pip install prefect
@@ -429,7 +474,7 @@ python sample.flow
 
 デフォルトの挙動では、タスクは Python メソッドのように実行できます。
 
-```
+```python
 job3_task()
 job4_task()
 ```
@@ -452,11 +497,11 @@ Prefect もスケジュール実行をする場合は、Prefect サーバ上に�
 これ Prefect では `デプロイメント` と呼び、フローの実装とは独立しています。
 フローとスケジュールなどの定義が分離されていることから、環境毎に実行時間や実行環境を変えたい、ことを柔軟に行えます。
 
-デプロイメントは、 prefect.yaml と呼ばれる設定ファイルに、スケジュールや Work Pool という実行環境などを設定します。
+デプロイメントは、 prefect.yaml と呼ばれる設定ファイルに、スケジュールや Work Pool を設定します。
 
 たとえば、のフロー定義を　`my-test-flow` を AM 10:00(JST) に実行するサンプルです。
 
-```
+```yaml
 deployments:
 - name: my-test-flow
   tags: ["test"]
@@ -464,6 +509,7 @@ deployments:
   schedule:
     cron: 0 10 * * *
     timezone: Asia/Tokyo
+    active: true
   flow_name: my-test-flow
   entrypoint: flows/sample.flow:overall_flow
   parameters:
@@ -473,9 +519,14 @@ deployments:
     job_variables: {}
 ```
 
+スケジューリングは Cron ベースで、タイムゾーンに対応しているので安心です。
+その他 Interval / RRule が使えます。
+
+`schedule` の `active: false` とすることで、設定を残したまま無効にできます。
+
 ### フロー実行のインフラストラクチャが分離している
 
-フローは Prefect サーバ上で実行されません。
+フローは Prefect Server 上では実行されません^[Prefect Serverをオンプレミスなどで構築し同じ環境でWorkerを動かせば可能です]。
 フローの実行方法の定義は、 `Work Pool` と呼び、例えば AWS の VPC や ECS Cluster の定義などを行います。
 
 また、インフラストラクチャのプロビジョニングも行うことができ、 ECS Cluster や Task Definition などの作成も不要となります。
@@ -489,9 +540,200 @@ deployments:
 
 ### 管理画面 がモダン
 
-Dashboard では直近の実行結果の統計などが見られ、モダンなデザインとなっています（もちろんダークモード対応）。
+Dashboard では直近の実行結果の統計などが見られ、モダンなデザインとなっています^[もちろんダークモード対応]。
 
 ![Prefect管理画面](/images/prefect-is-perfect/img1.png)
 
 特筆すべきは、エラーとなった flow のログです。
 Prefect Cloud では [Marvin](https://www.askmarvin.ai/) という AI により、実行ログから重要なエラーメッセージのみを選び表示してくれます。
+
+![タスクエラーログ](/images/prefect-is-perfect/img3.png)
+
+検証用サーバでは、週末はデータベースをシャットダウンしており、実行してしまってエラーがおきたのですが、その際でも最適なエラーログが出力されています。
+
+エラーログを見る必要はなくなりました。
+
+## Prefect と Sidekiq を連携させる
+
+上記の通り Prefect のメリットは大きいのですが、先述の通りバッチジョブは Sidekiq Batches 上で実行されており、Prefect と連携できません。
+Sidekiq には API が提供されており、バッチのエンキューはもちろん、Batches の実行ステータスを取得できます。
+
+そこで、 Sidekiq を動作させている Rails プロダクトの内部に Sidekiq Batches をコントロールするため簡単な REST API を追加し、
+Prefect 側で Polling することで、連携する方針としました。
+
+以下、実装のサンプルをご紹介します。
+
+### Sidekiq REST API の実装
+
+Sidekiq API を用いて、Sidekiq REST API を追加しました。
+
+- Sidekiq Worker クラス名とパラメータを指定してジョブをエンキューする
+  - Sidekiq Worker は Sidekiq Batches でラップし完了を待つ
+- エンキューした Sidekiq Worker のステータスを返却する
+
+#### ジョブをエンキューする
+
+エンキューの疑似コードです。(エラー処理は割愛してます)
+worker_class と worker_params をパラメータとして渡す想定です。
+
+```ruby
+def create
+  batch = Sidekiq::Batch.new
+  batch.queue = 'batch_callback_queue'
+  batch.jobs do
+    params['worker_class'].constantize.perform_async(params['worker_params'])
+  end
+
+  return json: { bid: batch.bid }
+end
+```
+
+返却した batch id を呼び出し元で保管しておきます。
+
+#### ジョブのステータスを取得する
+
+エンキューした Sidekiq Worker のステータスを待つコードです。
+パラメータから bid を渡す想定です。
+
+```ruby
+class SidekiqBatchStatusController < ApplicationController
+  def get
+     status = Sidekiq::Batch::Status.new(params[:bid])
+     return json: { status: status.completed? && status.pending.zero? 'completed' : 'processing' }
+  end
+end
+```
+
+### Prefect 側の実装
+
+Prefect 側では共通となるため、 Integrations として実装しました。
+
+#### プロジェクトの作成
+
+以下のドキュメントに従い、プロジェクトを作成します。
+
+https://docs.prefect.io/latest/integrations/contribute/#contributing-integrations
+
+```bash
+pip install cruft
+
+cruft create https://github.com/PrefectHQ/prefect-collection-template
+
+# 以下を入力する
+  [1/6] full_name (Arthur Dent):
+  [2/6] email (arthur.dent@example.com):
+  [3/6] github_organization (arthur_dent):
+  [4/6] collection_name (prefect-collection):
+  [5/6] collection_slug (prefect_collection):
+  [6/6] collection_short_description (Prefect Collection Template contains all the boilerplate that you need to create a Prefect collection.):
+```
+
+カレントディレクトリ以下に collection_name で入力した名前のディレクトリが作成され、以下にファイル群が作成されます。
+
+MAINTAINERS.md の指示に従い、セットアップを完了してください。
+
+#### tasks の作成
+
+```python
+import httpx
+import json
+import time
+from prefect import task
+
+@task
+def run_sidekiq_job(worker_class: str, worker_params: list):
+  response = httpx.post("https://my-api-url.example.com/api/sidekiq/jobs", json={'worker_class: worker_class, 'worker_params': json.dumps(worker_params)})
+  return response.raise_for_status().json()
+
+@task
+def wait_completed(bid: str):
+  status = 'processing'
+  while status != 'complete':
+    response = httpx.get(f"https://my-api.example.com/api/sidekiq/jobs/status?bid={bid}")
+    result = response.raise_for_status().json()
+    status = result['status']
+    time.sleep(10)
+
+  return status
+```
+
+#### blocks の作成
+
+API のエンドポイントやクレデンシャルを使う場合は Block を用意します。
+
+```python
+from prefect.blocks.core import Block
+from pydantic import Field
+class SidekiqBlock(Block):
+    """
+    Sidekiq API Endpoint Settings
+
+    Attributes:
+        base_uri (str): Base Uri
+
+    Example:
+        Load a stored value:
+        ```python
+        from prefect_sidekiq import SidekiqBlock
+        block = SidekiqBlock.load("BLOCK_NAME")
+        ```
+    """
+    _block_type_name = "sidekiq"
+    # ロゴがあれば置き換えます
+    _logo_url = "https://images.ctfassets.net/gm98wzqotmnx/08yCE6xpJMX9Kjl5VArDS/c2ede674c20f90b9b6edeab71feffac9/prefect-200x200.png?h=250"  # noqa
+    # ドキュメントのURL
+    _documentation_url = "https://my-team.github.io/prefect-sidekiq/blocks/#prefect-sidekiq.blocks.SidekiqBlock"  # noqa
+
+    base_url: str = Field("http://my-api.example.com/api", description="Base Url")
+
+    @classmethod
+    def seed_base_url(cls, name: str, base_url: str):
+        """
+        Seeds the field, value, so the block can be loaded.
+        """
+        block = cls(value=base_url)
+        block.save(name, overwrite=True)
+
+```
+
+#### Flow から呼び出す
+
+作成したインテグレーションは pip でインストールして、python モジュールと同様に利用できます。
+
+以下、インテグレーションを `prefect-sidekiq` とした場合の例です。
+
+```
+pip install prefect-sidekiq
+```
+
+```python
+from prefect import flow
+from prefect_sidekiq.tasks import run_sidekiq_job, wait_completed
+
+@flow
+def call_flow()
+  results = run_sidekiq_job(worker_class="MyWorker", worker_argument=[])
+  wait_completed(bid=results['bid'])
+
+```
+
+### 今後実装したい機能
+
+次の機能は、諸事情^[Sidekiq バージョンの制約と中断時は Sidekiq Worker 側にコードを埋め込むため、大規模な改修が必要になるため]で実装を見送りましたが、今後必要に応じて実行する予定です。　
+
+- Sidekiq Worker の実行を中断する
+- Batch Job 完了時のイベント発行
+
+# まとめ
+
+今回は、Workflow Engine の基盤として Prefect を採用したときの話と、既存の技術スタックとの連携する方法について説明しました。
+
+機会があればもう少し踏み込んだ Prefect の使い方をお話できればと思います。　
+
+少しでも参考になれば幸いです。
+
+
+# 参考
+
+- https://zenn.dev/overflow_offers/articles/about-sidekiq-batches
+- https://zenn.dev/overflow_offers/articles/20230216-how-to-create-batch-in-rails 
