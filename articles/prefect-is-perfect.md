@@ -14,9 +14,9 @@ publication_name: overflow_offers
 
 Web サービスを開発している皆様であれば、高度なデータ処理の大変さやつらさを味わったことはあるかと思います。
 
-- この表示用データを作成するには、API からのデータ取得が終わった後に、DWH で集計して・・・
-- 想定してたよりデータ量が多くて、許容時間内に処理が終わらない
-- あの API の Rate Limit 厳しいからから並列数制御しないと
+- グラフ用データを作成するには、API からデータ取得が終わった後に、DWH で集計して、その後バッチ処理かけてごにょごにょ
+- 想定してたよりデータ量が多くて、許容時間内に処理が終わらないー
+- あの API 、 Rate Limit 厳しいからから並列数制御しないとエラーになる
 
 など、悩みはつきません^[少なくとも、私は]。
 
@@ -399,10 +399,10 @@ https://docs.prefect.io/latest/guides/deployment/serverless-workers/
 
 Python に特化しているため、 エコシステムが利用でき、Python さえ理解していれば学習コストは低くなります。
 
-また、Conda、NumPy、Pandas など
+また、Conda、NumPy、Pandas など、機械学習やデータサイエンスライブラリが豊富にあり、それを活用できるのは大きな強みです。
 
-Python 自身の学習コストが発生しますが、データサイエンスや機械学習でのメジャーな言語となることや、Ruby や Perl などの近いシンタックスをもつことから、
-Web サービス開発のバックエンドエンジニアにはなじみやすいといえるでしょう。 (好みは別にして・・・)
+Python を使っていなくとも、 Ruby などと似た Syntax を持つため、
+Web サービス開発のバックエンドエンジニアにはなじみやすい^[好みはあるとはおもいますが・・・]といえるでしょう。
 
 ### DAG を記述せずにタスクの依存関係を直感的に記述できる
 
@@ -499,7 +499,7 @@ Prefect もスケジュール実行をする場合は、Prefect サーバ上に�
 
 デプロイメントは、 prefect.yaml と呼ばれる設定ファイルに、スケジュールや Work Pool を設定します。
 
-たとえば、のフロー定義を　`my-test-flow` を AM 10:00(JST) に実行するサンプルです。
+たとえば、[先述のフロー定義](#dag-を記述せずにタスクの依存関係を直感的に記述できる) を　`my-test-flow` という名前で AM 10:00(JST) に実行する Deployment を作成する設定ファイルは次の通りです。
 
 ```yaml
 deployments:
@@ -511,7 +511,7 @@ deployments:
     timezone: Asia/Tokyo
     active: true
   flow_name: my-test-flow
-  entrypoint: flows/sample.flow:overall_flow
+  entrypoint: flows/sample.py:overall_flow
   parameters:
     arg: "hello"
   work_pool:
@@ -519,10 +519,16 @@ deployments:
     job_variables: {}
 ```
 
-スケジューリングは Cron ベースで、タイムゾーンに対応しているので安心です。
-その他 Interval / RRule が使えます。
+`tags` は Deployment をラベル付けする際に使い、管理画面や CLI でフィルタをかけるために使います。
 
-`schedule` の `active: false` とすることで、設定を残したまま無効にできます。
+`schedule` で、スケジューリングを指定しています。`cron` で、crontab 形式のフォーマットをサポートし、 `timezone` でタイムゾーンを指定します。安心。
+`active: false` とすることで、設定を残したまま無効にできます。
+
+`entrypoint` は、Deployment が最初に実行する flow で、 相対パス : フロー関数名 の形式で指定します。
+
+`parameters` は、 flow の引数を Key-Value で指定します。
+
+`work_pool` は、Work Pool の名前やパラメータを指定します。 work_pool は個々の deployment 毎に設定します。詳細は後述します。
 
 ### フロー実行のインフラストラクチャが分離している
 
@@ -549,9 +555,7 @@ Prefect Cloud では [Marvin](https://www.askmarvin.ai/) という AI により�
 
 ![タスクエラーログ](/images/prefect-is-perfect/img3.png)
 
-検証用サーバでは、週末はデータベースをシャットダウンしており、実行してしまってエラーがおきたのですが、その際でも最適なエラーログが出力されています。
-
-エラーログを見る必要はなくなりました。
+この図の例は、検証用サーバで Flow を実行したときにエラーが発生したときのものです。弊社では、週末は検証用用のデータベースをシャットダウンしており、実行してしまってエラーがおきたのですが、その際でも最適なエラーログが出力されています。
 
 ## Prefect と Sidekiq を連携させる
 
@@ -726,9 +730,9 @@ def call_flow()
 
 # まとめ
 
-今回は、Workflow Engine の基盤として Prefect を採用したときの話と、既存の技術スタックとの連携する方法について説明しました。
+今回は、Workflow Engine の基盤として Prefect を採用したときの話と、既存の技術スタックとの連携する方法について説明しました。本番運用は一部分のみでしか開始していないため、これから使っていきながら知見をためていくことになります。
 
-機会があればもう少し踏み込んだ Prefect の使い方をお話できればと思います。　
+今後、知見がたまれば、より高度な使い方の記事を書こうとおもいます。
 
 少しでも参考になれば幸いです。
 
