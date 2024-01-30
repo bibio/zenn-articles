@@ -13,11 +13,13 @@ published_at: 2024-02-06 09:00
 おはこんばんちは。
 [Offers](https://offers.jp/) と、[Offers MGR](https://offers-mgr.com/lp/) を運営している株式会社 [overflow](https://overflow.co.jp/) のバックエンドエンジニアばばです。
 
-Web サービスを開発している皆様であれば、高度なデータ処理の大変さやつらさを味わったことはあるかと思います。
+Web サービスを開発している皆様であれば、高度なデータ処理の大変さ・つらさを味わったことはあるかと思います。
+
+たとえば
 
 - グラフ用データを作成するには、API からデータ取得が終わった後に、DWH で集計して、その後バッチ処理かけてごにょごにょ
 - 想定してたよりデータ量が多くて、許容時間内に処理が終わらないー
-- あの API 、 Rate Limit 厳しいからから並列数制御しないとエラーになる
+- あの API 、 Rate Limit 厳しいからから並列数制御しないといつまでたっても取得がおわらない・・・
 
 など、悩みはつきません^[少なくとも、私は]。
 
@@ -31,20 +33,20 @@ Web サービスを開発している皆様であれば、高度なデータ処�
 
 # 現在のデータ処理基盤のつらみ
 
-弊社のバックエンド技術スタックは Ruby on Rails で統一されており、この非機能要件の制御に Sidekiq の機能を活用して運用しています。
+弊社のバックエンド技術スタックは Ruby on Rails で統一されており、非同期となる処理も Sidekiq の機能を活用し運用しています。
 
-データの取得・集計などの基盤も、Sidekiq Worker 上でマイクロバッチ処理を実装し、[Sidekiq Pro Batches and Callbacks](https://www.youtube.com/watch?v=b2fI0vGf3Bo&list=PLjeHh2LSCFrWGT5uVjUuFKAcrcj5kSai1) (以下、 Sidekiq Batches) を利用しています。
+データの取得・集計などの基盤も、Sidekiq Worker 上でマイクロバッチ処理を実装し、[Sidekiq Pro Batches and Callbacks](https://www.youtube.com/watch?v=b2fI0vGf3Bo&list=PLjeHh2LSCFrWGT5uVjUuFKAcrcj5kSai1) (以下、 Sidekiq Batches) を利用して Workflow を実装しています。
 
 Sidekiq Worker 自体は、API の非同期処理ユースケースからわかるように、分散処理には強く、きめこまやかで柔軟な処理が実装できます。 また、 Rate Limit や DB 負荷の問題に対応する流量制限には、Sidekiq Enterprise の [Rate Limiting](https://github.com/sidekiq/sidekiq/wiki/Ent-Rate-Limiting) を活用し制限しています。
 
 Ruby on Rails の資源を利用しつつ、　カジュアルに Workflow を組めるのは大変便利なので重宝していますが、プロダクトに求められる要件の複雑化により、Workflow も複雑化していきました。
 
-その実装を進める上で、様々な痛みが起こるようになりました。
+その実装を進める上で、様々な痛みが起こるようになりました。痛みの中で一番大きかったものは、 Sidekiq Batches で Workflow を組んだときの可読性の低さでした。
 
 ## Sideiq Batches での Workflow を組むと可読性が低くなる
 
 Sidekiq Batches は、Batch と呼ばれるグループ化した Worker 群の実行状態を Sidekiq 側で管理し、状態変更（完了、成功、失敗など）で Callbacks を呼び出す仕組みになっています。
-この仕組みを利用して、依存関係をを記述するには、「状態変更の Callbacks 中で次の Batch を作成し、親の Batch の子ジョブとして追加する」ことを繰り返す実装になります。
+この仕組みを利用して、「状態変更の Callbacks 中で次の Batch を作成し、親の Batch の子ジョブとして追加する」ことで依存関係を構築しています。
 
 一方、Workflow は、処理の順番を定義するものであるので、次に何が実行されるかが自明でないと処理を追うことが難しくなります。
 GitHub Actions も、Workflow Engine の 1 つであり、YAML で宣言的なわかりやすい構文となっています。
@@ -236,7 +238,7 @@ end
 
 # Workflow Engine の検討
 
-Workflow Engine には様々なプロダクトがあります。闇雲に
+Workflow Engine には様々なプロダクトがあります。闇雲に試していっても時間がかかるため、選定基準を明確にした上で、候補を絞りこみました。
 
 ## 選定基準
 
@@ -248,7 +250,7 @@ Workflow Engine には様々なプロダクトがあります。闇雲に
 
 また、以下のような連携機能を有することも重視しました。
 
-- 弊社特有の事象として、Sidekiq や AWS と親和性高く連携できるか
+- 自社の技術スタック (特に、 Sidekiq や AWS) と親和性高く連携できるか
 - AWS との連携や拡張性が楽で、極力マネージドな構成と Open Source が選べるもの
 - Developer EXperience^[おもに生産性を上げストレスを減らすことを指しますが、イケてるものを使いたいという主観的な意味もこめてます] をあげてくれるもの
 
@@ -279,7 +281,7 @@ Python でフローを記述する
 
 YAML でフローを記述する
 オープンソース
-Treasure Data 社により、 embulk などとの親和性が高い
+Treasure Data 社による。Embulk、Fluentd などとの親和性が高くプラグインによるクラウド対応も充実
 小〜中規模向け
 
 ### [Prefect](https://www.prefect.io/)
@@ -299,6 +301,26 @@ YAML でフローを記述する
 Kuebenetes に特化した Argoflow や、クラウドベンダが提供するサービス(Step Functions)もありますが、今回は除外しました。
 
 ## 他の Workflow Engine に興味のある方へ
+
+### Ruby および Ruby on Rails 向けの Workflow Engine
+
+どうしても Ruby じゃなきゃダメなんや、という場合におすすめ。
+
+#### [Kuroko2](https://github.com/cookpad/kuroko2)
+
+Ruby でフローを記述する
+オープンソース
+Cookpad 社による Workflow & Job Scheduler で Google OAuth に対応している
+中規模向け
+
+#### [Rukawa](https://github.com/joker1007/rukawa)
+
+Ruby でフローを記述する
+オープンソース
+シンプルだが、スケジューラがなく Cron などのジョブ管理ツールが別途必要
+小〜中規模向け
+
+### Workflow Engine について知りたい
 
 かなり網羅されています。 GitHub Stars の数も参考になりますよ。
 
@@ -740,5 +762,5 @@ def call_flow()
 
 # 参考
 
-- https://zenn.dev/overflow_offers/articles/about-sidekiq-batches
-- https://zenn.dev/overflow_offers/articles/20230216-how-to-create-batch-in-rails 
+https://zenn.dev/overflow_offers/articles/about-sidekiq-batches
+https://zenn.dev/overflow_offers/articles/20230216-how-to-create-batch-in-rails 
