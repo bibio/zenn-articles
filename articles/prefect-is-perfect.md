@@ -1,10 +1,11 @@
 ---
-title: "Prefectでプロダクトデータ処理基盤のDXを向上させようとしているはなし"
+title: "Prefectでプロダクトデータ処理基盤のDXを向上させようとしているはなし | Offers Tech Blog"
 emoji: "♻"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["Prefect", "Workflows", "dataengineering", "Python"]
-published: false
+published: true
 publication_name: overflow_offers
+published_at: 2024-02-06 09:00
 ---
 
 # はじめに
