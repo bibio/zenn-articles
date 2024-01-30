@@ -254,15 +254,6 @@ Workflow Engine には様々なプロダクトがあります。闇雲に試し�
 - AWS との連携や拡張性が楽で、極力マネージドな構成と Open Source が選べるもの
 - Developer EXperience^[おもに生産性を上げストレスを減らすことを指しますが、イケてるものを使いたいという主観的な意味もこめてます] をあげてくれるもの
 
-### DAG とは？
-
-GitHub Workflow のような Workflow Engine でよく見られるデータ構造のことを、
-[向き非巡回グラフ](https://ja.wikipedia.org/wiki/%E6%9C%89%E5%90%91%E9%9D%9E%E5%B7%A1%E5%9B%9E%E3%82%B0%E3%83%A9%E3%83%95) (DAG) と呼びます。
-
-Workflow Engine の多数は、DAG を表現できるインタフェース (YAML, コードなど) を持っているか、プログラム内部で DAG を作成します。
-また、DAG に対応した Workflow Engine はその複雑な依存関係から、図による可視化機能を備えています。
-そのため、依存関係や実行順を直感的に管理できます。
-
 ## 候補の洗い出し
 
 有限の時間の中から以下をピックアップして検討し、点数をつけて評価しました。
@@ -517,8 +508,8 @@ job1_task と job2_task は並列実行させたいので、その場合は `sub
 
 Prefect もスケジュール実行をする場合は、Prefect サーバ上に、登録する必要があります。
 
-これ Prefect では `デプロイメント` と呼び、フローの実装とは独立しています。
-フローとスケジュールなどの定義が分離されていることから、環境毎に実行時間や実行環境を変えたい、ことを柔軟に行えます。
+これを Prefect では `デプロイメント` と呼び、フローの実装とは独立しています。
+フローとスケジュールなどの定義が分離されていることから、環境毎の実行時間などの変更を柔軟に行えます。
 
 デプロイメントは、 prefect.yaml と呼ばれる設定ファイルに、スケジュールや Work Pool を設定します。
 
@@ -547,11 +538,11 @@ deployments:
 `schedule` で、スケジューリングを指定しています。`cron` で、crontab 形式のフォーマットをサポートし、 `timezone` でタイムゾーンを指定します。安心。
 `active: false` とすることで、設定を残したまま無効にできます。
 
-`entrypoint` は、Deployment が最初に実行する flow で、 相対パス : フロー関数名 の形式で指定します。
+`entrypoint` は、Deployment が最初に実行する flow で、 相対パス : フロー関数名の形式で指定します。
 
 `parameters` は、 flow の引数を Key-Value で指定します。
 
-`work_pool` は、Work Pool の名前やパラメータを指定します。 work_pool は個々の deployment 毎に設定します。詳細は後述します。
+`work_pool` は、Work Pool の名前やパラメータを指定します。 work_pool は個々の Deployment 毎に設定します。詳細は後述します。
 
 ### フロー実行のインフラストラクチャが分離している
 
@@ -763,4 +754,4 @@ def call_flow()
 # 参考
 
 https://zenn.dev/overflow_offers/articles/about-sidekiq-batches
-https://zenn.dev/overflow_offers/articles/20230216-how-to-create-batch-in-rails 
+https://zenn.dev/overflow_offers/articles/20230216-how-to-create-batch-in-rails
